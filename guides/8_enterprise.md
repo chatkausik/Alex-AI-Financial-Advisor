@@ -485,7 +485,8 @@ Let's implement validation and safety checks to prevent AI errors from affecting
 
 ### Charter Agent Output Validation
 
-Add this validation code to `backend/charter/agent.py` to ensure well-formed JSON output:
+Add extra checks to `backend/charter/lamda_handler.py` to ensure well-formed JSON output.  
+Something along these lines:
 
 ```python
 import json
@@ -544,7 +545,7 @@ def validate_chart_data(chart_json: str) -> tuple[bool, str, Dict[Any, Any]]:
         return False, f"Validation error: {e}", {}
 
 # Use in your charter agent:
-async def run_charter_agent(job_id: str, task: str) -> str:
+async def run_charter_agent(job_id: str, portfolio_data: Dict[str, Any], db=None) -> Dict[str, Any]:
     # ... existing agent code ...
 
     result = await Runner.run(agent, input=task, max_turns=10)

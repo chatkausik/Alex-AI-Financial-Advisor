@@ -99,12 +99,27 @@ terraform output
 
 Let's verify the endpoint works with a simple test:
 
+On Mac or Linux:
+
 ```bash
 # Navigate to backend directory where test payload is located
 cd ../../backend
 
 # Invoke the endpoint and output directly to console
 aws sagemaker-runtime invoke-endpoint --endpoint-name alex-embedding-endpoint --content-type application/json --body fileb://vectorize_me.json --output json /dev/stdout
+```
+
+On Windows:
+
+```bash
+# Navigate to backend directory where test payload is located
+cd ../../backend
+
+# Invoke the endpoint and output directly to console
+aws sagemaker-runtime invoke-endpoint --endpoint-name alex-embedding-endpoint --content-type application/json --body fileb://vectorize_me.json --output json output.json
+
+# Then print the contents of output.json
+cat output.json
 ```
 
 You'll see a JSON array with 384 floating-point numbers - that's the text "vectorize me" converted into a vector embedding!
