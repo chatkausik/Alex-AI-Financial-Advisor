@@ -105,8 +105,27 @@ jobs:
 
       - name: Bootstrap state bucket (idempotent)
         working-directory: infra/bootstrap
+        env:
+          ACCOUNT_ID: ${{ steps.account.outputs.id }}
         run: |
           terraform init
+
+          # Import existing resources into local state so apply doesn't fail
+          # with "already exists". Safe to run every time — import is a no-op
+          # if the resource is already in state.
+          BUCKET="alex-terraform-state-${ACCOUNT_ID}"
+          TABLE="alex-terraform-locks"
+          GROUP="AlexCICD"
+
+          aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null && \
+            terraform import aws_s3_bucket.tf_state "$BUCKET" 2>/dev/null || true
+
+          aws dynamodb describe-table --table-name "$TABLE" 2>/dev/null && \
+            terraform import aws_dynamodb_table.tf_locks "$TABLE" 2>/dev/null || true
+
+          aws iam get-group --group-name "$GROUP" 2>/dev/null && \
+            terraform import aws_iam_group.alex_cicd "$GROUP" 2>/dev/null || true
+
           terraform apply -auto-approve
 
       - name: Terraform Init
