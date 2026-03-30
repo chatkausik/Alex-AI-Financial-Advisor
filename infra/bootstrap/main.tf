@@ -83,24 +83,45 @@ resource "aws_iam_group" "alex_cicd" {
   name = "AlexCICD"
 }
 
-resource "aws_iam_group_policy_attachment" "cicd_policies" {
-  for_each = toset([
-    "arn:aws:iam::aws:policy/AmazonS3FullAccess",
-    "arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess",
-    "arn:aws:iam::aws:policy/AWSLambda_FullAccess",
-    "arn:aws:iam::aws:policy/AmazonRDSFullAccess",
-    "arn:aws:iam::aws:policy/AmazonSQSFullAccess",
-    "arn:aws:iam::aws:policy/CloudFrontFullAccess",
-    "arn:aws:iam::aws:policy/AmazonAPIGatewayAdministrator",
-    "arn:aws:iam::aws:policy/IAMFullAccess",
-    "arn:aws:iam::aws:policy/AmazonSageMakerFullAccess",
-    "arn:aws:iam::aws:policy/SecretsManagerReadWrite",
-    "arn:aws:iam::aws:policy/CloudWatchFullAccess",
-    "arn:aws:iam::aws:policy/AWSAppRunnerFullAccess",
-    "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess",
-  ])
-  group      = aws_iam_group.alex_cicd.name
-  policy_arn = each.value
+# AWS limits IAM groups to 10 attached policies.
+# Use a single inline policy granting all required CI/CD permissions instead.
+resource "aws_iam_group_policy" "cicd_inline" {
+  name  = "AlexCICDPermissions"
+  group = aws_iam_group.alex_cicd.name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "AlexCICDFullAccess"
+        Effect = "Allow"
+        Action = [
+          "s3:*",
+          "dynamodb:*",
+          "lambda:*",
+          "rds:*",
+          "rds-data:*",
+          "sqs:*",
+          "cloudfront:*",
+          "apigateway:*",
+          "iam:*",
+          "sagemaker:*",
+          "secretsmanager:*",
+          "cloudwatch:*",
+          "logs:*",
+          "apprunner:*",
+          "ecr:*",
+          "bedrock:*",
+          "route53:*",
+          "acm:*",
+          "events:*",
+          "scheduler:*",
+          "sts:GetCallerIdentity",
+        ]
+        Resource = "*"
+      }
+    ]
+  })
 }
 
 output "state_bucket" {
