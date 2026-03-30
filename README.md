@@ -6,7 +6,18 @@
 
 > **Alex** is a production SaaS application I built that analyzes equity portfolios through a coordinated system of AI agents — delivering personalized reports, interactive charts, and retirement projections powered by AWS Bedrock, the OpenAI Agents SDK, and a fully serverless AWS infrastructure.
 
-**Production:** [kausik-digital-twin.com](https://kausik-digital-twin.com) &nbsp;|&nbsp; **Dev:** [d19rsg3zmbspay.cloudfront.net](https://d19rsg3zmbspay.cloudfront.net)
+**Production:** [kausik-digital-twin.com](https://kausik-digital-twin.com) &nbsp;|&nbsp; **Dev:** [d19rsg3zmbspay.cloudfront.net](https://d19rsg3zmbspay.cloudfront.net) &nbsp;|&nbsp; **GitHub:** [chatkausik/Alex-AI-Financial-Advisor](https://github.com/chatkausik/Alex-AI-Financial-Advisor)
+
+---
+
+## Quick Start
+
+```bash
+git clone https://github.com/chatkausik/Alex-AI-Financial-Advisor.git
+cd Alex-AI-Financial-Advisor
+```
+
+Then follow the [GitHub Actions setup](#cicd-with-github-actions) below to deploy with one click, or follow the [step-by-step guide](#deploying-alex) to deploy manually.
 
 ---
 
@@ -256,40 +267,84 @@ terraform init && terraform apply
 
 ---
 
-## CI/CD Pipeline
+## CI/CD with GitHub Actions
 
-GitHub Actions automates the full deploy/destroy lifecycle across environments.
+GitHub Actions automates the full deploy/destroy lifecycle. One workflow run builds all Lambda packages, provisions all AWS infrastructure via Terraform, and deploys the frontend — no local tooling required beyond AWS credentials.
 
 ### How the pipeline works
 
-1. **Package job** — Builds all Lambda zips via Docker (agents, api) and uv (ingest)
-2. **Deploy job** — Bootstraps remote state idempotently, runs `terraform plan` + `terraform apply`, then builds and deploys NextJS to S3/CloudFront
+1. **Package job** — Builds all 7 Lambda zips using Docker (agents + API) and uv (ingest)
+2. **Deploy job** — Downloads artifacts, bootstraps S3 remote state idempotently, runs `terraform plan` + `terraform apply`, then builds and deploys NextJS to S3/CloudFront
 
-### Required GitHub Secrets
+### Step 1 — Fork or clone the repo
 
-| Secret | Description |
-|--------|-------------|
-| `AWS_ACCESS_KEY_ID` | IAM user access key |
-| `AWS_SECRET_ACCESS_KEY` | IAM user secret key |
-| `OPENAI_API_KEY` | OpenAI API key |
-| `POLYGON_API_KEY` | Polygon.io market data |
-| `CLERK_JWKS_URL` | `https://<instance>.clerk.accounts.dev/.well-known/jwks.json` |
-| `CLERK_ISSUER` | `https://<instance>.clerk.accounts.dev` |
-| `LANGFUSE_PUBLIC_KEY` | LangFuse `pk-lf-...` |
-| `LANGFUSE_SECRET_KEY` | LangFuse `sk-lf-...` |
-| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Clerk publishable key |
+```bash
+git clone https://github.com/chatkausik/Alex-AI-Financial-Advisor.git
+cd Alex-AI-Financial-Advisor
+```
 
-### GitHub Environments
+Push to your own GitHub repository if you want to run the Actions under your account.
 
-| Environment | Rules |
-|-------------|-------|
-| `dev` | No restrictions — auto deploys |
-| `test` | No restrictions — auto deploys |
-| `prod` | Required reviewers + wait timer |
+### Step 2 — Add GitHub Secrets
 
-**Deploy:** Actions → Deploy Alex → Run workflow → select environment
+Go to your repo → **Settings → Secrets and variables → Actions → New repository secret**
 
-**Destroy:** Actions → Destroy Alex → Run workflow → type environment name to confirm
+Add each of the following:
+
+| Secret | Where to get it |
+|--------|----------------|
+| `AWS_ACCESS_KEY_ID` | AWS Console → IAM → Users → your user → Security credentials → Create access key |
+| `AWS_SECRET_ACCESS_KEY` | Same as above (only shown once at creation) |
+| `OPENAI_API_KEY` | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
+| `POLYGON_API_KEY` | [polygon.io/dashboard](https://polygon.io/dashboard) → API Keys |
+| `CLERK_JWKS_URL` | Clerk Dashboard → your app → API Keys → copy **JWKS URL**: `https://<instance>.clerk.accounts.dev/.well-known/jwks.json` |
+| `CLERK_ISSUER` | Same Clerk dashboard — the base URL: `https://<instance>.clerk.accounts.dev` |
+| `LANGFUSE_PUBLIC_KEY` | [cloud.langfuse.com](https://cloud.langfuse.com) → Settings → API Keys → `pk-lf-...` |
+| `LANGFUSE_SECRET_KEY` | Same page → `sk-lf-...` |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Clerk Dashboard → API Keys → Publishable key: `pk_test_...` |
+
+### Step 3 — Create GitHub Environments
+
+Go to **Settings → Environments → New environment** and create three environments:
+
+| Environment | Protection Rules |
+|-------------|-----------------|
+| `dev` | None — deploys immediately |
+| `test` | None — deploys immediately |
+| `prod` | Add required reviewers + set a wait timer |
+
+### Step 4 — Enable Bedrock Model Access
+
+In the [AWS Bedrock console](https://console.aws.amazon.com/bedrock/home):
+
+1. Go to **Model access** → **Modify model access**
+2. Enable **Amazon Nova Pro** (`us.amazon.nova-pro-v1:0`)
+3. If using cross-region inference profiles, repeat for each region (`us-east-1`, `us-west-2`)
+
+### Step 5 — Deploy
+
+Go to **Actions → Deploy Alex → Run workflow** → select environment → **Run workflow**
+
+The first run bootstraps all remote state infrastructure automatically. Subsequent runs are incremental.
+
+### Step 6 — Run Database Migrations
+
+After the first deploy, apply the schema to Aurora (one-time per environment):
+
+```bash
+# Update .env with the correct cluster ARN for the target environment
+# (find it in the terraform output or AWS console)
+
+cd backend/database
+uv run run_migrations.py   # Creates all tables
+uv run seed_data.py        # Loads 22 ETF instruments
+```
+
+> **Note:** `run_migrations.py` uses `load_dotenv(override=True)` so `.env` values take priority. Always verify `AURORA_CLUSTER_ARN` in `.env` matches the environment you are targeting before running.
+
+### Destroy
+
+Go to **Actions → Destroy Alex → Run workflow** → select environment → type the environment name to confirm
 
 ---
 
@@ -374,4 +429,4 @@ aws rds describe-db-clusters \
 
 ## Built By
 
-**Kausik** — [kausik-digital-twin.com](https://kausik-digital-twin.com) | [GitHub](https://github.com/chatkausik/Alex-AI-Financial-Advisor)
+**Kausik** — [kausik-digital-twin.com](https://kausik-digital-twin.com) | [github.com/chatkausik/Alex-AI-Financial-Advisor](https://github.com/chatkausik/Alex-AI-Financial-Advisor)
