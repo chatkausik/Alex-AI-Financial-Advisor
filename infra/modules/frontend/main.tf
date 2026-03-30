@@ -6,6 +6,29 @@ locals {
   cf_aliases  = local.has_domain ? [var.custom_domain, "www.${var.custom_domain}"] : []
 }
 
+# ── S3 Bucket for API Lambda package ──────────────────────────────────────────
+resource "aws_s3_bucket" "packages" {
+  bucket        = "${local.prefix}-api-packages-${var.account_id}"
+  force_destroy = true
+  tags          = local.tags
+}
+
+resource "aws_s3_bucket_public_access_block" "packages" {
+  bucket                  = aws_s3_bucket.packages.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_object" "api_package" {
+  count  = fileexists(local.api_zip) ? 1 : 0
+  bucket = aws_s3_bucket.packages.id
+  key    = "api/api_lambda.zip"
+  source = local.api_zip
+  etag   = fileexists(local.api_zip) ? filemd5(local.api_zip) : null
+}
+
 # ── S3 Static Site ────────────────────────────────────────────────────────────
 resource "aws_s3_bucket" "frontend" {
   bucket        = "${local.prefix}-frontend-${var.account_id}"
@@ -87,14 +110,17 @@ resource "aws_iam_role_policy" "api_aurora" {
 }
 
 resource "aws_lambda_function" "api" {
-  function_name    = "${local.prefix}-api"
-  role             = aws_iam_role.api.arn
-  filename         = fileexists(local.api_zip) ? local.api_zip : null
-  source_code_hash = fileexists(local.api_zip) ? filebase64sha256(local.api_zip) : null
-  handler          = "lambda_handler.handler"
-  runtime          = "python3.12"
-  timeout          = 30
-  memory_size      = 512
+  function_name     = "${local.prefix}-api"
+  role              = aws_iam_role.api.arn
+  s3_bucket         = aws_s3_bucket.packages.id
+  s3_key            = "api/api_lambda.zip"
+  s3_object_version = try(aws_s3_object.api_package[0].version_id, null)
+  handler           = "lambda_handler.handler"
+  runtime           = "python3.12"
+  timeout           = 30
+  memory_size       = 512
+
+  depends_on = [aws_s3_object.api_package]
 
   environment {
     variables = {
