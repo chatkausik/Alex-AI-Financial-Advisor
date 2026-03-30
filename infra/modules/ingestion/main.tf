@@ -167,8 +167,14 @@ resource "aws_api_gateway_usage_plan" "ingest" {
     api_id = aws_api_gateway_rest_api.ingest.id
     stage  = aws_api_gateway_stage.ingest.stage_name
   }
-  quota_settings    { limit  = 10000; period = "MONTH" }
-  throttle_settings { rate_limit = 100; burst_limit = 200 }
+  quota_settings {
+    limit  = 10000
+    period = "MONTH"
+  }
+  throttle_settings {
+    rate_limit  = 100
+    burst_limit = 200
+  }
 }
 
 resource "aws_api_gateway_usage_plan_key" "ingest" {
