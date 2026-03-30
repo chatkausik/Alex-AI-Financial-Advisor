@@ -1,0 +1,200 @@
+name: Deploy Alex
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options: [dev, test, prod]
+      skip_packaging:
+        description: "Skip Lambda packaging (use existing zips)"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write   # for OIDC if switching to role-based auth
+
+env:
+  TF_VERSION: "1.7.0"
+  PYTHON_VERSION: "3.12"
+  AWS_REGION: "us-east-1"
+
+jobs:
+  # ── Package Lambda functions ────────────────────────────────────────────────
+  package:
+    name: Package Lambdas
+    runs-on: ubuntu-latest
+    if: ${{ !inputs.skip_packaging }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Set up Python + uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Package all agent Lambda functions
+        working-directory: backend
+        run: uv run package_docker.py
+
+      - name: Package API Lambda function
+        working-directory: backend/api
+        run: uv run package_docker.py
+
+      - name: Upload Lambda zips as artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: lambda-packages-${{ inputs.environment }}
+          path: |
+            backend/planner/planner_lambda.zip
+            backend/tagger/tagger_lambda.zip
+            backend/reporter/reporter_lambda.zip
+            backend/charter/charter_lambda.zip
+            backend/retirement/retirement_lambda.zip
+            backend/api/api_lambda.zip
+          retention-days: 1
+
+  # ── Deploy infrastructure ───────────────────────────────────────────────────
+  deploy:
+    name: Terraform Deploy (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    needs: [package]
+    if: always() && (needs.package.result == 'success' || inputs.skip_packaging)
+    environment: ${{ inputs.environment }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Download Lambda packages
+        if: ${{ !inputs.skip_packaging }}
+        uses: actions/download-artifact@v4
+        with:
+          name: lambda-packages-${{ inputs.environment }}
+          path: .   # restores paths relative to repo root
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Get AWS Account ID
+        id: account
+        run: echo "id=$(aws sts get-caller-identity --query Account --output text)" >> $GITHUB_OUTPUT
+
+      - name: Bootstrap state bucket (idempotent)
+        working-directory: infra/bootstrap
+        run: |
+          terraform init
+          terraform apply -auto-approve
+
+      - name: Terraform Init
+        working-directory: infra
+        run: |
+          terraform init \
+            -backend-config="bucket=alex-terraform-state-${{ steps.account.outputs.id }}" \
+            -backend-config="key=${{ inputs.environment }}/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="dynamodb_table=alex-terraform-locks"
+
+      - name: Terraform Plan
+        working-directory: infra
+        env:
+          TF_VAR_openai_api_key:      ${{ secrets.OPENAI_API_KEY }}
+          TF_VAR_polygon_api_key:     ${{ secrets.POLYGON_API_KEY }}
+          TF_VAR_clerk_jwks_url:      ${{ secrets.CLERK_JWKS_URL }}
+          TF_VAR_clerk_issuer:        ${{ secrets.CLERK_ISSUER }}
+          TF_VAR_langfuse_public_key: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          TF_VAR_langfuse_secret_key: ${{ secrets.LANGFUSE_SECRET_KEY }}
+        run: |
+          terraform plan \
+            -var-file="environments/${{ inputs.environment }}.tfvars" \
+            -out=tfplan
+
+      - name: Terraform Apply
+        working-directory: infra
+        env:
+          TF_VAR_openai_api_key:      ${{ secrets.OPENAI_API_KEY }}
+          TF_VAR_polygon_api_key:     ${{ secrets.POLYGON_API_KEY }}
+          TF_VAR_clerk_jwks_url:      ${{ secrets.CLERK_JWKS_URL }}
+          TF_VAR_clerk_issuer:        ${{ secrets.CLERK_ISSUER }}
+          TF_VAR_langfuse_public_key: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          TF_VAR_langfuse_secret_key: ${{ secrets.LANGFUSE_SECRET_KEY }}
+        run: terraform apply -auto-approve tfplan
+
+      - name: Show deployment outputs
+        working-directory: infra
+        run: terraform output deployment_summary
+
+      # ── Deploy frontend to S3 + CloudFront ─────────────────────────────────
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Get CloudFront URL
+        id: cf
+        working-directory: infra
+        run: |
+          echo "url=$(terraform output -raw cloudfront_url)" >> $GITHUB_OUTPUT
+          echo "id=$(terraform output -raw cloudfront_id)"   >> $GITHUB_OUTPUT
+          echo "bucket=$(terraform output -raw frontend_bucket)" >> $GITHUB_OUTPUT
+          echo "api=$(terraform output -raw api_gateway_url)"    >> $GITHUB_OUTPUT
+
+      - name: Build frontend
+        working-directory: frontend
+        env:
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+          NEXT_PUBLIC_API_URL: ${{ steps.cf.outputs.api }}
+          NEXT_PUBLIC_CLOUDFRONT_URL: ${{ steps.cf.outputs.url }}
+        run: |
+          npm ci
+          npm run build
+
+      - name: Deploy frontend to S3
+        working-directory: frontend
+        run: |
+          BUCKET="${{ steps.cf.outputs.bucket }}"
+          aws s3 rm s3://${BUCKET}/ --recursive
+          aws s3 cp out/ s3://${BUCKET}/ --recursive \
+            --exclude "*.html" \
+            --cache-control "max-age=31536000,public"
+          aws s3 cp out/ s3://${BUCKET}/ --recursive \
+            --exclude "*" --include "*.html" \
+            --content-type "text/html" \
+            --cache-control "max-age=0,no-cache,no-store,must-revalidate"
+
+      - name: Invalidate CloudFront cache
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ steps.cf.outputs.id }} \
+            --paths "/*"
+
+      - name: Deployment complete
+        run: |
+          echo "✅ Alex ${{ inputs.environment }} deployed successfully!"
+          echo "🌐 Frontend: ${{ steps.cf.outputs.url }}"
+          echo "🔌 API:      ${{ steps.cf.outputs.api }}"

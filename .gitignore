@@ -144,6 +144,8 @@ celerybeat.pid
 # Terraform variables (contain secrets)
 *.tfvars
 !*.tfvars.example
+# Allow infra/environments/*.tfvars — secrets come from GitHub Actions secrets, not the file
+!infra/environments/*.tfvars
 .venv
 env/
 venv/
