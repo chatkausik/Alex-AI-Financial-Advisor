@@ -20,6 +20,7 @@ output "sqs_queue_url"        { value = module.agents.sqs_queue_url }
 
 # Frontend
 output "cloudfront_url"       { value = module.frontend.cloudfront_url }
+output "cloudfront_id"        { value = module.frontend.cloudfront_id }
 output "api_gateway_url"      { value = module.frontend.api_gateway_url }
 output "frontend_bucket"      { value = module.frontend.s3_bucket }
 
