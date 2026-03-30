@@ -186,7 +186,7 @@ resource "aws_cloudfront_distribution" "main" {
 
   origin {
     origin_id   = "S3-${aws_s3_bucket.frontend.id}"
-    domain_name = aws_s3_bucket.frontend.website_endpoint
+    domain_name = aws_s3_bucket_website_configuration.frontend.website_endpoint
 
     custom_origin_config {
       http_port              = 80
@@ -259,14 +259,9 @@ resource "aws_cloudfront_distribution" "main" {
   }
 
   viewer_certificate {
-    dynamic "acm_certificate" {
-      for_each = local.has_domain ? [1] : []
-      content {
-        acm_certificate_arn      = var.acm_certificate_arn
-        ssl_support_method       = "sni-only"
-        minimum_protocol_version = "TLSv1.2_2021"
-      }
-    }
+    acm_certificate_arn            = local.has_domain ? var.acm_certificate_arn : null
+    ssl_support_method             = local.has_domain ? "sni-only" : null
+    minimum_protocol_version       = local.has_domain ? "TLSv1.2_2021" : "TLSv1"
     cloudfront_default_certificate = !local.has_domain
   }
 
