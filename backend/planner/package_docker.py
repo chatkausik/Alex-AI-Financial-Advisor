@@ -29,10 +29,10 @@ def package_lambda():
     backend_dir = planner_dir.parent
     project_root = backend_dir.parent
     
-    # ignore_cleanup_errors=True: Docker installs packages as root, so the runner
-    # user cannot chmod those files during cleanup. Suppressing the error is safe
-    # because the zip is already extracted from the temp dir before cleanup runs.
-    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
+    # delete=False: Docker installs packages as root so Python cannot chmod or
+    # delete those files on cleanup, raising PermissionError. Skip cleanup entirely
+    # — the zip is already created and the CI runner workspace is ephemeral.
+    with tempfile.TemporaryDirectory(delete=False) as temp_dir:
         temp_path = Path(temp_dir)
         package_dir = temp_path / "package"
         package_dir.mkdir()

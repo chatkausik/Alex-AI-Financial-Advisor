@@ -27,14 +27,16 @@ def package_lambda():
     retirement_dir = Path(__file__).parent.absolute()
     backend_dir = retirement_dir.parent
     
-    # Create a temporary directory for packaging
-    with tempfile.TemporaryDirectory() as temp_dir:
+    # delete=False: Docker installs packages as root so Python cannot chmod or
+    # delete those files on cleanup, raising PermissionError. Skip cleanup entirely
+    # — the zip is already created and the CI runner workspace is ephemeral.
+    with tempfile.TemporaryDirectory(delete=False) as temp_dir:
         temp_path = Path(temp_dir)
         package_dir = temp_path / "package"
         package_dir.mkdir()
-        
+
         print("Creating Lambda package using Docker...")
-        
+
         # Export exact requirements from uv.lock (excluding the editable database package)
         print("Exporting requirements from uv.lock...")
         requirements_result = run_command(
@@ -53,7 +55,7 @@ def package_lambda():
 
         req_file = temp_path / "requirements.txt"
         req_file.write_text("\n".join(filtered_requirements))
-        
+
         # Use Docker to install dependencies for Lambda's architecture
         docker_cmd = [
             "docker", "run", "--rm",
@@ -65,19 +67,8 @@ def package_lambda():
             "-c",
             """cd /build && pip install --target ./package -r requirements.txt && pip install --target ./package --no-deps /database"""
         ]
-        
-        run_command(docker_cmd)
 
-        # Fix permissions: Docker runs as root so files in temp_path are root-owned.
-        # Restore write access so Python's TemporaryDirectory cleanup can delete them.
-        run_command([
-            "docker", "run", "--rm",
-            "--platform", "linux/amd64",
-            "-v", f"{temp_path}:/build",
-            "--entrypoint", "/bin/bash",
-            "public.ecr.aws/lambda/python:3.12",
-            "-c", "chmod -R 777 /build"
-        ])
+        run_command(docker_cmd)
 
         # Copy Lambda handler, agent, templates, and observability
         shutil.copy(retirement_dir / "lambda_handler.py", package_dir)
