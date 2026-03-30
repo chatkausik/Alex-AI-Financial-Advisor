@@ -29,7 +29,7 @@ resource "aws_s3_object" "api_package" {
   etag   = fileexists(local.api_zip) ? filemd5(local.api_zip) : null
 }
 
-# ── S3 Static Site ────────────────────────────────────────────────────────────
+# ── S3 Static Site (private — served via CloudFront OAC) ──────────────────────
 resource "aws_s3_bucket" "frontend" {
   bucket        = "${local.prefix}-frontend-${var.account_id}"
   force_destroy = true
@@ -38,30 +38,38 @@ resource "aws_s3_bucket" "frontend" {
 
 resource "aws_s3_bucket_public_access_block" "frontend" {
   bucket                  = aws_s3_bucket.frontend.id
-  block_public_acls       = false
-  block_public_policy     = false
-  ignore_public_acls      = false
-  restrict_public_buckets = false
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
 }
 
-resource "aws_s3_bucket_website_configuration" "frontend" {
-  bucket = aws_s3_bucket.frontend.id
-  index_document { suffix = "index.html" }
-  error_document { key    = "404.html" }
+# ── CloudFront Origin Access Control ──────────────────────────────────────────
+resource "aws_cloudfront_origin_access_control" "frontend" {
+  name                              = "${local.prefix}-oac"
+  origin_access_control_origin_type = "s3"
+  signing_behavior                  = "always"
+  signing_protocol                  = "sigv4"
 }
 
+# Bucket policy: allow only CloudFront OAC to read objects
 resource "aws_s3_bucket_policy" "frontend" {
   bucket = aws_s3_bucket.frontend.id
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
       Effect    = "Allow"
-      Principal = "*"
+      Principal = { Service = "cloudfront.amazonaws.com" }
       Action    = "s3:GetObject"
       Resource  = "${aws_s3_bucket.frontend.arn}/*"
+      Condition = {
+        StringEquals = {
+          "AWS:SourceArn" = aws_cloudfront_distribution.main.arn
+        }
+      }
     }]
   })
-  depends_on = [aws_s3_bucket_public_access_block.frontend]
+  depends_on = [aws_cloudfront_distribution.main]
 }
 
 # ── API Lambda ────────────────────────────────────────────────────────────────
@@ -211,15 +219,9 @@ resource "aws_cloudfront_distribution" "main" {
   aliases             = local.cf_aliases
 
   origin {
-    origin_id   = "S3-${aws_s3_bucket.frontend.id}"
-    domain_name = aws_s3_bucket_website_configuration.frontend.website_endpoint
-
-    custom_origin_config {
-      http_port              = 80
-      https_port             = 443
-      origin_protocol_policy = "http-only"
-      origin_ssl_protocols   = ["TLSv1.2"]
-    }
+    origin_id                = "S3-${aws_s3_bucket.frontend.id}"
+    domain_name              = aws_s3_bucket.frontend.bucket_regional_domain_name
+    origin_access_control_id = aws_cloudfront_origin_access_control.frontend.id
   }
 
   origin {
