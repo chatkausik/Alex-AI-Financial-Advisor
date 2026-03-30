@@ -29,6 +29,33 @@ resource "aws_s3_bucket_public_access_block" "vectors" {
   restrict_public_buckets = true
 }
 
+# ── S3 Bucket for Lambda package ──────────────────────────────────────────────
+resource "aws_s3_bucket" "packages" {
+  bucket        = "${local.prefix}-ingest-packages-${var.account_id}"
+  force_destroy = true
+  tags          = local.tags
+}
+
+resource "aws_s3_bucket_public_access_block" "packages" {
+  bucket                  = aws_s3_bucket.packages.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+locals {
+  ingest_zip = "${var.lambda_packages_dir}/ingest/lambda_function.zip"
+}
+
+resource "aws_s3_object" "ingest_package" {
+  count  = fileexists(local.ingest_zip) ? 1 : 0
+  bucket = aws_s3_bucket.packages.id
+  key    = "ingest/lambda_function.zip"
+  source = local.ingest_zip
+  etag   = fileexists(local.ingest_zip) ? filemd5(local.ingest_zip) : null
+}
+
 # ── Lambda Ingest ─────────────────────────────────────────────────────────────
 resource "aws_iam_role" "ingest_lambda" {
   name = "${local.prefix}-ingest-lambda-role"
@@ -69,19 +96,16 @@ resource "aws_iam_role_policy" "ingest_lambda" {
   })
 }
 
-locals {
-  ingest_zip = "${var.lambda_packages_dir}/ingest/lambda_function.zip"
-}
-
 resource "aws_lambda_function" "ingest" {
-  function_name    = "${local.prefix}-ingest"
-  role             = aws_iam_role.ingest_lambda.arn
-  filename         = fileexists(local.ingest_zip) ? local.ingest_zip : null
-  source_code_hash = fileexists(local.ingest_zip) ? filebase64sha256(local.ingest_zip) : null
-  handler          = "ingest_s3vectors.lambda_handler"
-  runtime          = "python3.12"
-  timeout          = 60
-  memory_size      = 512
+  function_name     = "${local.prefix}-ingest"
+  role              = aws_iam_role.ingest_lambda.arn
+  s3_bucket         = aws_s3_bucket.packages.id
+  s3_key            = "ingest/lambda_function.zip"
+  s3_object_version = try(aws_s3_object.ingest_package[0].version_id, null)
+  handler           = "ingest_s3vectors.lambda_handler"
+  runtime           = "python3.12"
+  timeout           = 60
+  memory_size       = 512
 
   environment {
     variables = {
@@ -89,7 +113,9 @@ resource "aws_lambda_function" "ingest" {
       SAGEMAKER_ENDPOINT = var.sagemaker_endpoint
     }
   }
-  tags = local.tags
+
+  depends_on = [aws_s3_object.ingest_package]
+  tags       = local.tags
 }
 
 resource "aws_cloudwatch_log_group" "ingest" {
