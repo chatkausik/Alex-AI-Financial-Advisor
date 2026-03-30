@@ -165,6 +165,10 @@ resource "aws_lambda_function" "planner" {
       SQS_QUEUE_URL       = aws_sqs_queue.jobs.url
       POLYGON_API_KEY     = var.polygon_api_key
       POLYGON_PLAN        = var.polygon_plan
+      REPORTER_FUNCTION   = "${local.prefix}-reporter"
+      CHARTER_FUNCTION    = "${local.prefix}-charter"
+      RETIREMENT_FUNCTION = "${local.prefix}-retirement"
+      TAGGER_FUNCTION     = "${local.prefix}-tagger"
     })
   }
 
