@@ -67,7 +67,18 @@ def package_lambda():
         ]
         
         run_command(docker_cmd)
-        
+
+        # Fix permissions: Docker runs as root so files in temp_path are root-owned.
+        # Restore write access so Python's TemporaryDirectory cleanup can delete them.
+        run_command([
+            "docker", "run", "--rm",
+            "--platform", "linux/amd64",
+            "-v", f"{temp_path}:/build",
+            "--entrypoint", "/bin/bash",
+            "public.ecr.aws/lambda/python:3.12",
+            "-c", "chmod -R 777 /build"
+        ])
+
         # Copy Lambda handler, agent, templates, and observability
         shutil.copy(charter_dir / "lambda_handler.py", package_dir)
         shutil.copy(charter_dir / "agent.py", package_dir)
