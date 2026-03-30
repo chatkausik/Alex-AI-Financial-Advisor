@@ -101,6 +101,43 @@ jobs:
           name: lambda-packages-${{ inputs.environment }}
           path: .   # restores paths relative to repo root
 
+      - name: Fix Lambda package paths
+        if: ${{ !inputs.skip_packaging }}
+        run: |
+          echo "=== Downloaded zips ==="
+          find . -name "*.zip" -not -path "./.git/*" | sort
+
+          # upload-artifact@v4 may strip the common 'backend/' prefix.
+          # If files landed at ./planner/... instead of ./backend/planner/...,
+          # copy them into the expected backend/ structure.
+          declare -A ZIPS=(
+            ["planner/planner_lambda.zip"]="backend/planner/planner_lambda.zip"
+            ["tagger/tagger_lambda.zip"]="backend/tagger/tagger_lambda.zip"
+            ["reporter/reporter_lambda.zip"]="backend/reporter/reporter_lambda.zip"
+            ["charter/charter_lambda.zip"]="backend/charter/charter_lambda.zip"
+            ["retirement/retirement_lambda.zip"]="backend/retirement/retirement_lambda.zip"
+            ["api/api_lambda.zip"]="backend/api/api_lambda.zip"
+            ["ingest/lambda_function.zip"]="backend/ingest/lambda_function.zip"
+          )
+          for src in "${!ZIPS[@]}"; do
+            dst="${ZIPS[$src]}"
+            if [ -f "$src" ] && [ ! -f "$dst" ]; then
+              mkdir -p "$(dirname "$dst")"
+              cp "$src" "$dst"
+              echo "Copied $src -> $dst"
+            fi
+          done
+
+          echo "=== Final backend/ zips ==="
+          find backend -name "*.zip" | sort
+
+          # Fail fast if required zips are still missing
+          missing=0
+          for f in backend/ingest/lambda_function.zip backend/api/api_lambda.zip; do
+            [ -f "$f" ] || { echo "MISSING: $f"; missing=1; }
+          done
+          [ $missing -eq 0 ] || exit 1
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
