@@ -6,7 +6,10 @@ output "sagemaker_endpoint"   { value = module.sagemaker.endpoint_name }
 # Ingestion
 output "vector_bucket"        { value = module.ingestion.vector_bucket }
 output "ingest_api_endpoint"  { value = module.ingestion.api_endpoint }
-output "ingest_api_key"       { value = module.ingestion.api_key_value; sensitive = true }
+output "ingest_api_key" {
+  value     = module.ingestion.api_key_value
+  sensitive = true
+}
 
 # Database
 output "aurora_cluster_arn"   { value = module.database.cluster_arn }
