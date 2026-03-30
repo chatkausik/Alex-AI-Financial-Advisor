@@ -56,6 +56,12 @@ jobs:
         working-directory: backend/api
         run: uv run package_docker.py
 
+      - name: Package ingest Lambda function
+        working-directory: backend/ingest
+        run: |
+          uv sync
+          uv run package.py
+
       - name: Upload Lambda zips as artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -67,6 +73,7 @@ jobs:
             backend/charter/charter_lambda.zip
             backend/retirement/retirement_lambda.zip
             backend/api/api_lambda.zip
+            backend/ingest/lambda_function.zip
           retention-days: 1
 
   # ── Deploy infrastructure ───────────────────────────────────────────────────
